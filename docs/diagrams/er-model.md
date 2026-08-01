@@ -81,6 +81,15 @@ diferente de `ultimaFonteUsada`/`ultimoTomUsado`/`ultimaVelocidadeUsada` em
 `MUSICA`, que representam o último estado usado independente de setlist
 (decisão registrada no PRD, RF-15).
 
+Uma observação importante é que Musica.ultimoTomUsado e Setlist_Musica.tom tem 
+sempre o mesmo valor: ao mudar o tom em uma música dentro de uma setlist, o 
+último tom usado da música também é atualizado. Essa denormalização controlada 
+permite que a mesma coluna seja redundante num cenário que o usuário muda o tom
+dentro de uma setlist (o tom é salvo em SetlistMusica.tom e Musica.ultimoTomUsado)
+e redundancia zero quando o tom é alterado fora de qualquer setlist. É importante 
+que a anomalia de atualização não aconteça, vide Formas Normais.
+
+
 ## Nota de nomenclatura
 
 A entidade originalmente chamada "Lista" foi renomeada para "Setlist" para
