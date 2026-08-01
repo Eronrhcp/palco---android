@@ -1,0 +1,657 @@
+openapi: 3.0.3
+info:
+  title: Palco API
+  description: >
+    API do backend do Palco — app de teleprompter de cifras para músicos
+    de voz e violão. Cobre autenticação, importação de cifra a partir de
+    um link do Cifra Club (ou texto manual), e gestão de repertório
+    (músicas e setlists). Rotas rastreáveis aos requisitos funcionais do
+    PRD (comentários `# RF-XX` em cada operação).
+  version: "0.1.0"
+
+servers:
+  - url: https://api.palco.app/v1
+    description: Ambiente de produção (placeholder)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Autenticação
+  - name: Cifras
+  - name: Músicas
+  - name: Setlists
+
+paths:
+  /auth/registro:
+    post:
+      # RF-01
+      tags: [Autenticação]
+      summary: Cadastra um novo usuário
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistroRequest"
+      responses:
+        "201":
+          description: Usuário criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usuario"
+        "409":
+          description: E-mail já cadastrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErroResposta"
+        "400":
+          $ref: "#/components/responses/ErroValidacao"
+
+  /auth/login:
+    post:
+      # RF-02
+      tags: [Autenticação]
+      summary: Autentica o usuário e retorna os tokens de acesso
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login bem-sucedido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: E-mail ou senha inválidos
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErroResposta"
+
+  /auth/refresh:
+    post:
+      # RF-03
+      tags: [Autenticação]
+      summary: Renova o access token a partir de um refresh token válido
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "200":
+          description: Novo access token emitido
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "401":
+          description: Refresh token inválido ou expirado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErroResposta"
+
+  /auth/logout:
+    post:
+      # RF-04
+      tags: [Autenticação]
+      summary: Invalida o refresh token do usuário
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+      responses:
+        "204":
+          description: Logout realizado com sucesso
+
+  /cifras/importar:
+    post:
+      # RF-05, RF-06, RF-07 — assíncrono conforme ADR-006
+      tags: [Cifras]
+      summary: Inicia a importação assíncrona de uma cifra (link ou texto manual)
+      description: >
+        O backend decide como processar o corpo da requisição: se `link`
+        for enviado, tenta buscar e parsear a página; se `cifraManual` for
+        enviado, salva o conteúdo diretamente sem parsing. Exatamente um
+        dos dois deve ser enviado. `setlistId` e `novaSetlistNome` são
+        opcionais — se omitidos, a música é criada apenas no repertório,
+        sem associação a nenhuma setlist.
+
+        Esta operação não processa a cifra de forma síncrona (ADR-006):
+        retorna imediatamente um job para acompanhamento via
+        `GET /cifras/importar/{jobId}`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImportarCifraRequest"
+      responses:
+        "202":
+          description: Importação aceita; processamento em andamento
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportacaoJob"
+        "400":
+          $ref: "#/components/responses/ErroValidacao"
+
+  /cifras/importar/{jobId}:
+    get:
+      # ADR-006
+      tags: [Cifras]
+      summary: Consulta o status de um job de importação de cifra
+      description: >
+        Destinado a polling pelo app enquanto o status é `pendente` ou
+        `processando`. Quando `concluido`, o campo `musica` traz a música
+        criada. Quando `falhou` (ex: parsing automático não conseguiu
+        extrair a cifra — RF-06), `mensagemErro` explica o motivo e o
+        cliente deve oferecer reenvio via `cifraManual`.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Status atual do job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportacaoJob"
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+
+  /musicas:
+    get:
+      # RF-22
+      tags: [Músicas]
+      summary: Busca músicas em todo o repertório do usuário
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Termo de busca (título ou artista)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Lista de músicas correspondentes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Musica"
+
+  /musicas/{musicaId}:
+    get:
+      # RF-23
+      tags: [Músicas]
+      summary: Retorna uma música específica, com sua cifra e última configuração usada
+      parameters:
+        - $ref: "#/components/parameters/MusicaId"
+      responses:
+        "200":
+          description: Música encontrada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicaDetalhada"
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+
+  /setlists:
+    get:
+      tags: [Setlists]
+      summary: Lista as setlists do usuário autenticado
+      responses:
+        "200":
+          description: Lista de setlists
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Setlist"
+    post:
+      # RF-08
+      tags: [Setlists]
+      summary: Cria uma nova setlist
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome]
+              properties:
+                nome:
+                  type: string
+      responses:
+        "201":
+          description: Setlist criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Setlist"
+
+  /setlists/{setlistId}:
+    patch:
+      # RF-12
+      tags: [Setlists]
+      summary: Renomeia uma setlist
+      parameters:
+        - $ref: "#/components/parameters/SetlistId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome]
+              properties:
+                nome:
+                  type: string
+      responses:
+        "200":
+          description: Setlist atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Setlist"
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+    delete:
+      # RF-12
+      tags: [Setlists]
+      summary: Exclui uma setlist
+      parameters:
+        - $ref: "#/components/parameters/SetlistId"
+      responses:
+        "204":
+          description: Setlist excluída
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+
+  /setlists/{setlistId}/musicas:
+    get:
+      # RF-21
+      tags: [Setlists]
+      summary: Lista (ou busca) músicas dentro de uma setlist, na ordem definida
+      parameters:
+        - $ref: "#/components/parameters/SetlistId"
+        - name: q
+          in: query
+          required: false
+          description: Termo de busca dentro da setlist (título ou artista)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Músicas da setlist, incluindo configuração por combinação
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SetlistMusicaItem"
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+    post:
+      # RF-09
+      tags: [Setlists]
+      summary: Adiciona uma música existente do repertório a esta setlist
+      parameters:
+        - $ref: "#/components/parameters/SetlistId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [musicaId]
+              properties:
+                musicaId:
+                  type: integer
+      responses:
+        "201":
+          description: Música adicionada à setlist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetlistMusicaItem"
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+
+  /setlists/{setlistId}/musicas/reordenar:
+    patch:
+      # RF-11
+      tags: [Setlists]
+      summary: Redefine a ordem das músicas dentro da setlist
+      parameters:
+        - $ref: "#/components/parameters/SetlistId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ordemMusicaIds]
+              properties:
+                ordemMusicaIds:
+                  type: array
+                  description: IDs das músicas na nova ordem desejada
+                  items:
+                    type: integer
+      responses:
+        "200":
+          description: Ordem atualizada
+        "400":
+          $ref: "#/components/responses/ErroValidacao"
+
+  /setlists/{setlistId}/musicas/{musicaId}:
+    delete:
+      # RF-10
+      tags: [Setlists]
+      summary: Remove uma música da setlist (sem excluir do repertório geral)
+      parameters:
+        - $ref: "#/components/parameters/SetlistId"
+        - $ref: "#/components/parameters/MusicaId"
+      responses:
+        "204":
+          description: Música removida da setlist
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+
+  /setlists/{setlistId}/musicas/{musicaId}/config:
+    patch:
+      # RF-13, RF-14
+      tags: [Setlists]
+      summary: Atualiza fonte, tom e/ou velocidade para essa combinação setlist+música
+      description: >
+        Esta operação também atualiza `ultimaFonteUsada`, `ultimoTomUsado`
+        e `ultimaVelocidadeUsada` na música (ADR-004) — o backend garante
+        essa escrita dupla na mesma transação.
+      parameters:
+        - $ref: "#/components/parameters/SetlistId"
+        - $ref: "#/components/parameters/MusicaId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigMusica"
+      responses:
+        "200":
+          description: Configuração atualizada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetlistMusicaItem"
+        "404":
+          $ref: "#/components/responses/NaoEncontrado"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    SetlistId:
+      name: setlistId
+      in: path
+      required: true
+      schema:
+        type: integer
+    MusicaId:
+      name: musicaId
+      in: path
+      required: true
+      schema:
+        type: integer
+
+  responses:
+    ErroValidacao:
+      description: Dados de entrada inválidos
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErroResposta"
+    NaoEncontrado:
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErroResposta"
+
+  schemas:
+    ErroResposta:
+      type: object
+      properties:
+        codigo:
+          type: string
+          example: "EMAIL_JA_CADASTRADO"
+        mensagem:
+          type: string
+          example: "Já existe um usuário cadastrado com esse e-mail."
+        timestamp:
+          type: string
+          format: date-time
+
+    RegistroRequest:
+      type: object
+      required: [email, senha]
+      properties:
+        email:
+          type: string
+          format: email
+        senha:
+          type: string
+          format: password
+          minLength: 8
+
+    LoginRequest:
+      type: object
+      required: [email, senha]
+      properties:
+        email:
+          type: string
+          format: email
+        senha:
+          type: string
+          format: password
+
+    TokenResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiraEm:
+          type: integer
+          description: Tempo de expiração do access token, em segundos
+
+    Usuario:
+      type: object
+      description: Nunca inclui senhaHash — dado sensível, nunca exposto pela API
+      properties:
+        id:
+          type: integer
+        email:
+          type: string
+          format: email
+        imagem:
+          type: string
+          nullable: true
+        criadoEm:
+          type: string
+          format: date-time
+
+    DestinoImportacao:
+      type: object
+      properties:
+        setlistId:
+          type: integer
+          nullable: true
+        novaSetlistNome:
+          type: string
+          nullable: true
+
+    OrigemPorLink:
+      type: object
+      required: [link]
+      properties:
+        link:
+          type: string
+          format: uri
+          example: "https://www.cifraclub.com.br/artista/musica/"
+
+    OrigemPorTextoManual:
+      type: object
+      required: [cifraManual]
+      properties:
+        cifraManual:
+          type: object
+          required: [titulo, artista, corpoCifra]
+          properties:
+            titulo:
+              type: string
+            artista:
+              type: string
+            corpoCifra:
+              type: string
+
+    ImportarCifraRequest:
+      description: >
+        Exatamente um entre `link` e `cifraManual` deve ser enviado. O
+        backend decide o fluxo de processamento com base em qual campo
+        veio preenchido.
+      allOf:
+        - $ref: "#/components/schemas/DestinoImportacao"
+        - oneOf:
+            - $ref: "#/components/schemas/OrigemPorLink"
+            - $ref: "#/components/schemas/OrigemPorTextoManual"
+
+    ImportacaoJob:
+      type: object
+      description: Job de importação assíncrona de cifra (ADR-006)
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+          enum: [pendente, processando, concluido, falhou]
+        musica:
+          allOf:
+            - $ref: "#/components/schemas/Musica"
+          nullable: true
+          description: Presente apenas quando status = concluido
+        mensagemErro:
+          type: string
+          nullable: true
+          description: Presente apenas quando status = falhou
+        criadoEm:
+          type: string
+          format: date-time
+        atualizadoEm:
+          type: string
+          format: date-time
+
+    Cifra:
+      type: object
+      properties:
+        id:
+          type: integer
+        corpoCifra:
+          type: string
+        linkOrigem:
+          type: string
+          nullable: true
+        origem:
+          type: string
+          enum: [importada, manual]
+
+    Musica:
+      type: object
+      properties:
+        id:
+          type: integer
+        titulo:
+          type: string
+        artista:
+          type: string
+        tomOriginal:
+          type: string
+        cifra:
+          $ref: "#/components/schemas/Cifra"
+
+    MusicaDetalhada:
+      allOf:
+        - $ref: "#/components/schemas/Musica"
+        - type: object
+          properties:
+            ultimaFonteUsada:
+              type: integer
+            ultimoTomUsado:
+              type: string
+            ultimaVelocidadeUsada:
+              type: integer
+
+    Setlist:
+      type: object
+      properties:
+        id:
+          type: integer
+        nome:
+          type: string
+        criadoEm:
+          type: string
+          format: date-time
+
+    ConfigMusica:
+      type: object
+      properties:
+        fonte:
+          type: integer
+        tom:
+          type: string
+        velocidade:
+          type: integer
+
+    SetlistMusicaItem:
+      type: object
+      description: Música dentro do contexto de uma setlist específica
+      properties:
+        musica:
+          $ref: "#/components/schemas/Musica"
+        ordem:
+          type: integer
+        config:
+          $ref: "#/components/schemas/ConfigMusica"

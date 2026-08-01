@@ -13,6 +13,8 @@ erDiagram
     MUSICA ||--|| CIFRA : "tem"
     SETLIST ||--o{ SETLIST_MUSICA : "contem"
     MUSICA ||--o{ SETLIST_MUSICA : "aparece_em"
+    USUARIO ||--o{ IMPORTACAO_JOB : "solicita"
+    IMPORTACAO_JOB ||--o| MUSICA : "gera"
 
     USUARIO {
         int id PK
@@ -56,6 +58,16 @@ erDiagram
         string tom
         int velocidade
     }
+
+    IMPORTACAO_JOB {
+        int id PK
+        int usuarioId FK
+        string status
+        int musicaId FK
+        string mensagemErro
+        datetime criadoEm
+        datetime atualizadoEm
+    }
 ```
 
 ## Explicação das relações
@@ -81,14 +93,15 @@ diferente de `ultimaFonteUsada`/`ultimoTomUsado`/`ultimaVelocidadeUsada` em
 `MUSICA`, que representam o último estado usado independente de setlist
 (decisão registrada no PRD, RF-15).
 
-Uma observação importante é que Musica.ultimoTomUsado e Setlist_Musica.tom tem 
-sempre o mesmo valor: ao mudar o tom em uma música dentro de uma setlist, o 
-último tom usado da música também é atualizado. Essa denormalização controlada 
-permite que a mesma coluna seja redundante num cenário que o usuário muda o tom
-dentro de uma setlist (o tom é salvo em SetlistMusica.tom e Musica.ultimoTomUsado)
-e redundancia zero quando o tom é alterado fora de qualquer setlist. É importante 
-que a anomalia de atualização não aconteça, vide Formas Normais.
-
+6. **Usuario → ImportacaoJob (1 para 0..N):** um usuário pode solicitar
+   zero ou várias importações de cifra; cada job pertence a exatamente
+   um usuário.
+7. **ImportacaoJob → Musica (1 para 0..1):** um job de importação gera,
+   no máximo, uma música (zero enquanto ainda está `pendente`/
+   `processando`, ou se `falhou`; exatamente uma quando `concluido`).
+   `ImportacaoJob` foi introduzida pela decisão de processamento
+   assíncrono da importação (ver ADR-006) — não existia na versão
+   síncrona original do modelo.
 
 ## Nota de nomenclatura
 
